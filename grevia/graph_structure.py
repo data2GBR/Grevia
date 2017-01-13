@@ -33,26 +33,68 @@ def add_list_of_words(G,list_of_words):
 				G.add_edge(edge[0], edge[1], weight=1)
 	return G
 
-def add_string_of_words(G,list_of_words):
+def add_string_of_words(G,list_of_words,text_id,text_data):
 	""" add a string of words to the graph G and connect them in following order.
 		If some of the words already exist and are linked, 
-		increase the edge weight by one and add a new edge id.
+		increase the edge weight by one and add the details of the new path to the path
+		dictionary attached to the edge.
+		G: graph
+		list_of_words (list of strings): list of text words
+		text_id (num or string): text id
+		text_data (dict): dictionary of text data
 		Return the updated graph
 	"""
 	#G = Graph.copy()
-	for word in list_of_words:
-		for edge in couples:
-			if G.has_edge(edge[0],edge[1]):
-				# we added this one before, just increase the weight by one
-				G[edge[0]][edge[1]]['weight'] += 1
+	for idx,word in enumerate(list_of_words):
+		# for each text in the dataframe, words are nodes of the graph,
+		# connected if they follow each other
+		#print(idx)
+		path_props_dic = {}
+		path_props_dic['text_id'] = text_id
+		path_props_dic['text_data'] = text_data
+		path_props_dic['word_position'] = idx
+		path_key = str(text_id)+'_'+str(idx)
+		if (idx+1)<len(list_of_words):
+			word_id = word
+			next_word_id = list_of_words[idx+1]
+			# Adding the nodes
+			if not G.has_node(word_id):
+				G.add_node(word_id)
+			if not G.has_node(next_word_id):
+				G.add_node(next_word_id)
+			# Adding an edge
+			if G.has_edge(word_id,next_word_id):
+				# we have already seen the edge before, 
+				# just increase the weight by one
+				G[word_id][next_word_id]['weight'] += 1
+				# save the path details on the edge
+				G[word_id][next_word_id]['paths'][path_key] = path_props_dic	
 			else:
-				# new edge. add with weight=1
-				G.add_edge(edge[0], edge[1], weight=1)
+				# new edge. add with weight=1,
+				# add the path details in the path dictionary
+				dic_of_paths = {}
+				dic_of_paths[path_key] = path_props_dic
+				G.add_edge(word_id, next_word_id,
+					{'weight':1,'paths':dic_of_paths})
 	return G
 
 #######################################################################
 # Handle attributes
 #######################################################################
+
+def light_copy(G):
+	""" return a new graph, copy of G but without the data on the edges and nodes
+		except edges weights
+	"""
+	H = nx.Graph()
+	#[H.add_node(node) for node in G.nodes()]
+	H.add_nodes_from(G.nodes())
+	for node1,node2,data in G.edges(data=True):
+		data_light = {k:data[k] for k in data if not k=='paths'}
+		#data_light = {'weight' : data['weight'],'weight_n' : data['weight_n'],'doc_freq' : data['doc_freq']}
+		H.add_edge(node1,node2,data_light)
+	return H
+
 def compute_degrees(G,kind='weighted',weight='weight'):
 	""" Compute the degree and store it as node properties.
 		kind (string, default 'weighted'): specify 'weighted', 'unweighted' or 'both'
@@ -71,6 +113,15 @@ def compute_degrees(G,kind='weighted',weight='weight'):
 		nx.set_node_attributes(G,'degree',degreeDic)
 	else:
 		raise ValueError("kind must be 'weighted', 'unweighted' or 'both'")
+
+def compute_doc_freq(G):
+	""" Compute the document frequency of an edge (nb of documents where it appears).
+		save the value of each edge of the graph.
+	"""
+	for node1,node2,data in G.edges(data=True):
+		doc_list=[ path_dic['text_id'] for path_dic in data['paths'].values()]
+		nb_doc = len(set(doc_list))
+		G[node1][node2]['doc_freq'] = nb_doc
 
 def normalize_weights(G,weight=None,weight_n='weight_n'):
 	""" Compute the degree of all nodes and normalize the weights of a graph
@@ -110,6 +161,44 @@ def rescale_weights(G,weight='weight',weight_rescale='weight_rescale'):
 	print('created variable {}'.format(weight_rescale))
 	return G
 
+def value_stats(G,item,value):
+	""" return the mean, min and max of a value attached to the nodes or edges of graph G
+		item (string): 'node' or 'edge'
+		value (string): name of the value
+	"""
+	if item=='edge':
+		n1,n2,data = zip(*G.edges(data=value))
+	elif item=='node':
+		n1,data_dic = zip(*G.nodes(data=True))
+		data = [d[value] for d in data_dic]
+	else:
+		raise ValueError("only 'node' or 'edge' are accepted as item")
+	mean_value = np.mean(data)
+	min_value = np.min(data)
+	max_value = np.max(data)
+	print('statistics for value {}'.format(value))
+	print('mean: '+str(mean_value)+', min: '+str(min_value)+', max: '+str(max_value))
+	return mean_value , min_value, max_value
+
+def top_values(G,item,value,nb_values=None):
+	""" return the top values of data in graph G
+		return a dataframe with first column(s) corresponding to node and edge
+		with their associated value (sorted)
+		item (string): 'edge' or 'node'
+		value (string): name of the value attached to the nodes or edges of graph G
+		nb_values (int or None, default=None): number of values to return, if nb_values=None return all values 
+	"""
+	if item=='edge':
+		dfx = pd.DataFrame([ (n1,n2,data[value]) for n1,n2,data in G.edges(data=True)])
+		dfx.columns = ['node 1', 'node 2', value]
+	elif item=='node':
+		dfx = pd.DataFrame([ (n,data[value]) for n,data in G.nodes(data=True)])
+		dfx.columns = ['node', value]
+	else:
+		raise ValueError("only 'node' or 'edge' are accepted as item")
+	dfx = dfx.sort_values([value],ascending=False)
+	return dfx.head(nb_values)
+
 def remove_weak_links(G,threshold,weight='weight_n'):
 	""" Remove the weakest edges (weight smaller than threshold) of the most connected nodes of G
 		use the weights stored in variable name weight (default='weight_n')
@@ -134,6 +223,7 @@ def shrink_graph(G,max_nb_of_edges,start=0,step=0.001):
 	while H.size() > max_nb_of_edges:
 		print(threshold)
 		H = remove_weak_links(H,threshold)
+		H.remove_nodes_from(nx.isolates(H))
 		threshold +=step
 	return H
 
@@ -156,7 +246,8 @@ def merge_strongly_connected_nodes(G,ratio=0.5,iterations=2):
 		#df_i = df.iloc[0:1000,:]
 		# merge the nodes
 		G = merge_nodes_from_df(G,df,ratio)
-		#print('== next ==')   
+		#print('== next ==')
+	return G   
 
 def merge_nodes_from_df(G,df,ratio=0.5):
 	""" merge nodes in the df if the connection is above a threshold
@@ -194,35 +285,54 @@ def merge_nodes(G, node1, node2, data=False):
 		if data='node1' or 'node2' the new node inherit the data of the given node and
 		the degree of all nodes is recomputed after merging
 	"""
-	H = G.copy()
-	# create the new node
-	node_id = node1+'_'+node2
-	if data == False:
-		H.add_node(node_id)
-	elif data == True:
-		degree1 = len(G[node1])
-		degree2 = len(G[node2])
-		if degree1 > degree2:
-			H.add_node(node_id, H.node[node1])
-		else:
-			H.add_node(node_id, H.node[node2])
+	#H = G.copy()
+	H = G
+	if node1 == node2: # if self-edge
+		H.remove_edge(node1,node2)
 	else:
-		raise ValueError("data only accept True or False")
-	# connect it to the rest
-	for n, n_data in H[node1].items():
-		if not (n == node2 or n == node1):
-			#props = H[node1][n]
-			H.add_edge(node_id, n, n_data)
-	for n, n_data in H[node2].items():
-		if not (n == node1 or n == node2):
-			#props = H[node2][n]
-			H.add_edge(node_id, n, n_data)
-	# remove the initial nodes and edges
-	H.remove_node(node1)
-	H.remove_node(node2)
+		# create the new node
+		node_id = node1+'_'+node2
+		if data == False:
+			H.add_node(node_id)
+		elif data == True:
+			degree1 = len(G[node1])
+			degree2 = len(G[node2])
+			if degree1 > degree2:
+				H.add_node(node_id, H.node[node1])
+			else:
+				H.add_node(node_id, H.node[node2])
+		else:
+			raise ValueError("data only accept True or False")
+		# connect it to the rest
+		for n, n_data in H[node1].items():
+			if not (n == node2 or n == node1):
+				#props = H[node1][n]
+				H.add_edge(node_id, n, n_data)
+		for n, n_data in H[node2].items():
+			if not (n == node1 or n == node2):
+				#props = H[node2][n]
+				H.add_edge(node_id, n, n_data)
+		# remove the initial nodes and edges
+		H.remove_node(node1)
+		H.remove_node(node2)
 	# compute new nodes properties
 	# TODO: recompute only for the neighbors of the merged nodes
-	H = normalize_weights(H,weight='weight')
+	#H = normalize_weights(H,weight='weight')
+	return H
+
+def shrink_merge(G,max_nb_of_edges,start=0,step=0.001):
+	""" Alternatively merge strong links and remove weak links to get a visualizable graph
+	"""
+	H = G.copy()
+	#merge_strongly_connected_nodes(H,ratio=0.5,iterations=1)
+	threshold = start
+	while H.size() > max_nb_of_edges:
+		print(threshold)
+		H = remove_weak_links(H,threshold)
+		H.remove_nodes_from(nx.isolates(H))
+		H = normalize_weights(H,weight='weight')
+		merge_strongly_connected_nodes(H,ratio=0.5,iterations=1)
+		threshold +=step
 	return H
 
 ################################################################
