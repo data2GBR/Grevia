@@ -509,12 +509,29 @@ def merge_nodes_respect_wiring(G, node1, node2, data=False):
 			else:
 				H.node[node_id]['paths']=H[node1][node2]['paths']
 
+			# handle the case where data about connections are stored on node2
+			if 'paths' in H.node[node2]:
+				node_paths = copy.deepcopy(H.node[node2]['paths'])
+				edge_paths = H[node1][node2]['paths']
+				for text_id in edge_paths.keys():
+					if text_id in node_paths:
+						for idx in edge_paths[text_id]['word_positions']:
+							idx2 = find_next_idx(edge_paths[text_id]['word_positions'],
+								node_paths[text_id]['word_positions'],idx)
+							if idx2>=0: # if there is a path corresponding to the edge path in the node2 paths,
+								H.node[node2]['paths'][text_id]['word_positions'].pop(
+									H.node[node2]['paths'][text_id]['word_positions'].index(idx2))
+								if not H.node[node2]['paths'][text_id]['word_positions']:
+									del H.node[node2]['paths'][text_id]
+
+
+
 			# remove edge between node1 and node2
 			H.remove_edge(node1,node2)
 			# remove nodes if they are disconnected
 			if not H.degree(node1):
 				H.remove_node(node1)
-			if not H.degree(node2):
+			if node2 in H and not H.degree(node2): # first check for the case node1==node2, then the degree
 				H.remove_node(node2)
 	return H
 
@@ -633,6 +650,33 @@ def disconnect_node(G,node1,node2,text_id,idx):
 	if not len(edge['paths']):
 		G.remove_edge(node1,node2)
 
+
+def merge_strongly_connected_nodes_fast(G,min_weight,max_iter=1000):
+	""" Iteratively merge the strongest connections in a graph while respecting the wiring.
+		The process is done until the strongest connection has a weight of min_weight 
+		or max_iter has been reached. 
+	"""
+	# Create a lightweight copy of the graph, without the smallest links
+	print('Copying the graph...')
+	H = G.copy()
+	threshold = min_weight
+	print('Shrinking the copy...')
+	H = remove_weak_links(H,threshold,weight='weight')
+	H.remove_nodes_from(nx.isolates(H))
+	# Search for the strongest connections on the small graph
+	# and merge them both on the small and full graphs
+	for i in range(max_iter):
+		top_table = top_values(H,'edge','weight',nb_values=1)
+		#if not i%20:
+		node1,node2,weight = top_table.iloc[0].node1,top_table.iloc[0].node2,top_table.iloc[0].weight
+		print('Iter {}.== {} {} ==. Weight {}.'.format(i,node1,node2,weight))
+		H = merge_nodes_respect_wiring(H, node1, node2, data=False)
+		G = merge_nodes_respect_wiring(G, node1, node2, data=False)
+		if weight<min_weight:
+			break
+	return G
+
+
 def shrink_merge(G,max_nb_of_edges,start=0,step=0.001):
 	""" Alternatively merge strong links and remove weak links to get a visualizable graph
 	"""
@@ -647,6 +691,147 @@ def shrink_merge(G,max_nb_of_edges,start=0,step=0.001):
 		merge_strongly_connected_nodes(H,ratio=0.5,iterations=1)
 		threshold +=step
 	return H
+
+
+################################################################
+# Community detection and classification
+
+def find_communities(G):
+	""" Community detection on graph G
+
+	Uses the module 'community' to find communities in the graph.
+	The nodes are labelled inplace.
+	Return
+	G: where all the nodes have been labelled in a community
+	culsterDic: dictionary of nodes id as key and cluster id as value
+
+	"""
+	import community
+	#first compute the best partition
+	clusterDic = community.best_partition(G)
+	nb_communities = len(set(clusterDic.values()))
+	print('Nb of communities found: {}'.format(nb_communities))
+	nx.set_node_attributes(G,'cluster',clusterDic)
+	return G,clusterDic
+
+def get_filenames_in_clusters(clusterDic,df_filenames):
+	""" Find the filenames contained in each communities
+	clusterDic: dictionary with documnent id as key and cluster id as value
+	df_filenames: pandas dataframe indexed by the document ids and with a column 'filename'
+	return:
+	cluster_dic_name, a dictionary with cluster as key and list of filenames as value
+	
+	"""
+	# First step:
+	# Create a dict with clusters id as key and the list of document ids as value
+	nb_communities = len(set(clusterDic.values()))
+	cluster_dic = {}
+	for cluster_i in range(nb_communities):
+		doc_list = [idx for idx,value in clusterDic.items() if value==cluster_i]
+		cluster_dic[cluster_i] = doc_list
+	# Second step:
+	# Replace the document id with the filename of the document
+	cluster_dic_name = {}
+	for key in cluster_dic.keys():
+		list_of_names = []
+		for idx in cluster_dic[key]:
+			list_of_names.append(df_filenames.loc[int(idx),'filename'])
+		cluster_dic_name[key]=list_of_names
+	return cluster_dic_name 
+
+def extract_cluster_as_subgraph(G,cluster_id):
+	""" Extract the subgraph with nodes belonging to community cluster_id
+	
+	Make a copy of the graph, return a subgraph of G.
+	Return a graph
+
+	"""
+	"""
+	G_c = G.copy()
+	for node,data in G_c.nodes(data=True):
+		if not data['cluster']==cluster_id:
+			G_c.remove_node(node)
+	print('Nb of edges of the subgraph: {}, nb of nodes: {}'.format(G_c.size(),len(G_c.nodes())))
+	return G_c
+	"""
+	G_c = nx.Graph()
+	for node1,node2,data in G.edges(data=True):
+		if G.node[node1]['cluster']==cluster_id and G.node[node2]['cluster']==cluster_id:
+			G_c.add_edge(node1,node2,data)
+			G_c.node[node1] = G.node[node1]
+			G_c.node[node2] = G.node[node2]
+	print('Nb of edges of the subgraph: {}, nb of nodes: {}'.format(G_c.size(),len(G_c.nodes())))
+	return G_c	
+
+def cluster_graph(G,min_cluster_size):
+	""" Separate the graph G into communities that have a specified scale (size)
+
+	Find communities in graph G and recusively communities within communities,
+	until the communities cannot be separated further or have reached a size smaller
+	than min_cluster_size
+	return:
+	list of subgraphs, each one corresponding to a community
+
+	"""
+	subgraph_list = []
+	graph = G.copy()
+	if len(graph.nodes())>min_cluster_size:
+		graph,clusterDic = find_communities(graph)
+		nb_communities = len(set(clusterDic.values()))
+		if nb_communities > 1:
+			for c_i in range(nb_communities): 
+				G_sub = extract_cluster_as_subgraph(graph,cluster_id=c_i)
+				[subgraph_list.append(item) for item in cluster_graph(G_sub,min_cluster_size)]
+		else:
+			subgraph_list.append(graph)
+	else:
+		subgraph_list.append(graph)
+	return subgraph_list
+
+def clusters_info(subgraph_list):
+	import numpy as np
+	print('Nb of communities:',len(subgraph_list))
+	list_nb_nodes = [len(graph.nodes()) for graph in subgraph_list]
+	print('Community mean size: {:.2f}, min size: {}, max size: {}'.format(np.mean(list_nb_nodes),
+		np.min(list_nb_nodes),np.max(list_nb_nodes)))
+
+
+def subgraphs_to_filenames(list_of_graphs,df_of_filenames,density=False):
+	""" Return the list of filenames associated to each graph in the list_of_graphs.
+		
+		for each graph in the list of graphs, associate the nodes id to their filename
+		using df_of_filenames.
+		Return:
+		list of list containing the filenames for each community (graph)
+		if density==True, append at the end of each filename list the density of the subgraph
+
+	"""
+	cluster_name_list = []
+	for graph in list_of_graphs:
+		subgraph_names_list = []
+		for node in graph:
+			subgraph_names_list.append(df_of_filenames.loc[int(node),'filename'])
+		cluster_name_list.append(subgraph_names_list)
+		if density == True:
+			subgraph_names_list.append(nx.density(graph))
+	return cluster_name_list
+
+def output_filename_classification(cluster_name_list,csv_filename):
+	""" Save the classification in a csv file
+	
+	Each column correspond to a cluster.
+	Along the columns are the filenames classified in the corresponding cluster.
+	Return the dataframe.
+
+	"""
+	# Create a dataframe from filename lists
+	clusters_table = pd.DataFrame()
+	for idx,name_list in enumerate(cluster_name_list):
+		df1=pd.DataFrame(name_list)
+		clusters_table = pd.concat([clusters_table,df1], ignore_index=True, axis=1)
+	print('Save to file {}'.format(csv_filename))
+	clusters_table.to_csv(csv_filename)
+	return clusters_table
 
 ################################################################
 # Ouput the graph
