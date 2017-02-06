@@ -665,11 +665,12 @@ def merge_strongly_connected_nodes_fast(G,min_weight,max_iter=1000):
 	H.remove_nodes_from(nx.isolates(H))
 	# Search for the strongest connections on the small graph
 	# and merge them both on the small and full graphs
+	nb_of_edges = H.size()
 	for i in range(max_iter):
 		top_table = top_values(H,'edge','weight',nb_values=1)
 		#if not i%20:
 		node1,node2,weight = top_table.iloc[0].node1,top_table.iloc[0].node2,top_table.iloc[0].weight
-		print('Iter {}.== {} {} ==. Weight {}.'.format(i,node1,node2,weight))
+		print('Iter {}.== {} {} ==. Weight {} (estimated nb of iter.: {}).'.format(i,node1,node2,weight,nb_of_edges))
 		H = merge_nodes_respect_wiring(H, node1, node2, data=False)
 		G = merge_nodes_respect_wiring(G, node1, node2, data=False)
 		if weight<min_weight:
@@ -692,6 +693,28 @@ def shrink_merge(G,max_nb_of_edges,start=0,step=0.001):
 		threshold +=step
 	return H
 
+################################################################
+# Create the graph of document
+
+def doc_graph(G):
+	""" Create a graph of documents from the graph of words.
+
+	G: graph of words
+	Return
+	G_doc graph of documents (indexed by their document Id).
+
+	"""
+	G_doc = nx.Graph()
+	for node,data in G.nodes(data=True):
+		if 'paths' in data.keys():
+			list_of_docs = data['paths'].keys()
+			if len(list_of_docs)>1:
+				for pair in itertools.combinations(list_of_docs, 2):
+					if G_doc.has_edge(*pair):
+						G_doc[pair[0]][pair[1]]['weight']+=1
+					else:
+						G_doc.add_edge(pair[0],pair[1],weight=1)
+	return G_doc
 
 ################################################################
 # Community detection and classification
