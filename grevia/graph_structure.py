@@ -704,6 +704,7 @@ def doc_graph(G):
 	G_doc graph of documents (indexed by their document Id).
 
 	"""
+	import itertools
 	G_doc = nx.Graph()
 	for node,data in G.nodes(data=True):
 		if 'paths' in data.keys():
