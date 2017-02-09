@@ -6,6 +6,7 @@
 import networkx as nx
 import numpy as np
 import pandas as pd
+import copy
 
 def say_hello(name):
 	print('Hello Mister {}'.format(name))
@@ -430,7 +431,6 @@ def merge_nodes_respect_wiring(G, node1, node2, data=False):
 		if data='auto', the new node inherit the data of the node having some data,
 						if both have data, the node having the largest degree
 	"""
-	import copy
 	if not (node1 in G):
 		print("Warning: node '{}' not in the graph".format(node1))
 	elif not (node2 in G):
@@ -443,87 +443,49 @@ def merge_nodes_respect_wiring(G, node1, node2, data=False):
 			H = G
 			# create the new node
 			node_id = node1+'_'+node2
-			#node_imbed_links = copy.deepcopy(H[node1][node2]['paths'])
-			if data == False:
+			# Check if node name already exist, if not create it
+			if node_id not in H:
 				H.add_node(node_id)
+			# Handle new node data (except 'paths')
+			if data == False:
+				node_data = {}
 			elif data == node1:
-				node_data = copy.deepcopy(H.node[node1])
-				H.add_node(node_id, node_data)
+				node_data = H.node[node1]
 			elif data == node2:
-				node_data = copy.deepcopy(H.node[node2])
-				H.add_node(node_id, node_data)
-			elif data =='auto':
-				degree1 = len(G[node1])
-				degree2 = len(G[node2])
+				node_data = H.node[node2]
+			elif data =='auto': # data from node with the largest degree
+				degree1 = len(H[node1])
+				degree2 = len(H[node2])
 				if degree1 > degree2 and H.node[node1]:
-					node_data = copy.deepcopy(H.node[node1])
-					H.add_node(node_id, node_data)
+					node_data = H.node[node1]
 				else:
-					node_data = copy.deepcopy(H.node[node2])
-					H.add_node(node_id, node_data)
+					node_data = H.node[node2]
 			else:
 				raise ValueError("data only accept False, auto or the id of one of the nodes")
-			# connect it to the rest
+			# copy node data
+			for key in node_data.keys():
+				if not (key=='paths' or key in H.node[node_id]): # 'paths' need special handling (see later on)
+					H.node[node_id][key]=node_data[key]
 
-			#handle outgoing connections
-			edges_to_remove = copy_links(G,node1,node2,node_id,direction='out')
-			# disconnect from the previous nodes
+			# next step: connect node_id to the rest of the graph
+			# Transfer in-connection of node1 and out-connections of node 2 to node_id
+
+			# Handle outgoing connections of node2
+			# Copy the outgoing connections related to the merging, to the new node
+			edges_to_remove = copy_links(H,node1,node2,node_id,direction='out')
+			# disconnect these outgoing connections from node2
 			for (node,text_id,word_pos) in edges_to_remove:
-				disconnect_node(G,node2,node,text_id,word_pos)
+				#print(node,text_id,word_pos)
+				disconnect_node(H,node2,node,text_id,word_pos)
 
-			#handle the ingoing connections
-			edges_to_remove = copy_links(G,node1,node2,node_id,direction='in')
-			# disconnect from the previous nodes
-			paths_dic = {}
+			#handle the ingoing connections of node1
+			edges_to_remove = copy_links(H,node1,node2,node_id,direction='in')
+			# disconnect them from node1
 			for (node,text_id,word_pos) in edges_to_remove:
-				disconnect_node(G,node,node1,text_id,word_pos)
+				disconnect_node(H,node,node1,text_id,word_pos)
 
-			# Compare the paths saved on the node to the paths on the edges
-			# and update the paths:
-			# some paths get separated and have to be removed
-			# We want to keep the word position of the first word on the merged words
-			# The solution is to save the text and position from the edge to the merged node
-			# We have to handle the case where a node to be merged is already the product
-			# of a merge
-			if 'paths' in H.node[node1]: # if there are paths, compare them to the edge ones
-				# copy the dict 
-				# since we want to iterate on a copy of it and modify 2 other copies
-				node_paths = copy.deepcopy(H.node[node1]['paths'])
-				H.node[node_id]['paths'] = copy.deepcopy(node_paths)
-				edge_paths = H[node1][node2]['paths']
-				for text_id in node_paths.keys():
-					if text_id in edge_paths:
-						for idx in node_paths[text_id]['word_positions']:
-							idx2 = find_next_idx(node_paths[text_id]['word_positions'],
-								edge_paths[text_id]['word_positions'],idx)
-							if idx2==-1: # if there is no path corresponding to the node path in the edge paths,
-								H.node[node_id]['paths'][text_id]['word_positions'].pop(
-									H.node[node_id]['paths'][text_id]['word_positions'].index(idx))
-							else:
-								H.node[node1]['paths'][text_id]['word_positions'].pop(
-									H.node[node1]['paths'][text_id]['word_positions'].index(idx))
-								if not H.node[node1]['paths'][text_id]['word_positions']:
-									del H.node[node1]['paths'][text_id]
-					else:
-						del H.node[node_id]['paths'][text_id]
-			else:
-				H.node[node_id]['paths']=H[node1][node2]['paths']
-
-			# handle the case where data about connections are stored on node2
-			if 'paths' in H.node[node2]:
-				node_paths = copy.deepcopy(H.node[node2]['paths'])
-				edge_paths = H[node1][node2]['paths']
-				for text_id in edge_paths.keys():
-					if text_id in node_paths:
-						for idx in edge_paths[text_id]['word_positions']:
-							idx2 = find_next_idx(edge_paths[text_id]['word_positions'],
-								node_paths[text_id]['word_positions'],idx)
-							if idx2>=0: # if there is a path corresponding to the edge path in the node2 paths,
-								H.node[node2]['paths'][text_id]['word_positions'].pop(
-									H.node[node2]['paths'][text_id]['word_positions'].index(idx2))
-								if not H.node[node2]['paths'][text_id]['word_positions']:
-									del H.node[node2]['paths'][text_id]
-
+			# Next step: record the edge paths in the node_id data
+			transfer_paths_to_node(H,node1,node2,node_id)
 
 
 			# remove edge between node1 and node2
@@ -533,91 +495,69 @@ def merge_nodes_respect_wiring(G, node1, node2, data=False):
 				H.remove_node(node1)
 			if node2 in H and not H.degree(node2): # first check for the case node1==node2, then the degree
 				H.remove_node(node2)
-	return H
-
-def copy_links(G,node1,node2,node3,direction):
-	""" Follow the links between node1 and node2 of graph G to their neighbors, according the direction.
-		if direction='out', the out edges from node2 are followed and its neighbors are connected
-		to node3
-		if direction='in', the in edges to node1 are followed back and the connected neighbors are
-		connected to node3
-		return the list of edges that have been copied
-	"""
-	if direction=='out':
-		edge_list = G.successors(node2)
-		source_node = node2
-	elif direction == 'in':
-		edge_list = G.predecessors(node1)
-		target_node = node1
-	else:
-		raise ValueError("direction can only be 'in' or 'out'.")
+	return H	
 	
-	text_ids = [x for x in G[node1][node2]['paths'].keys()]
-	set1 = set(text_ids)
-	edges_copied = []
-	for idx,n_neighbors in enumerate(edge_list):
-		if not (n_neighbors==node1 or n_neighbors==node2): #avoid selfloops and reverse direction
-			if direction=='out':
-				target_node = n_neighbors
-			else:
-				source_node = n_neighbors
-			#print(pred,node1)
-			set2 = set([x for x in G[source_node][target_node]['paths'].keys()])
-			common_elems = set1 & set2
-			for text_id in common_elems:
-				list_of_positions = G[node1][node2]['paths'][text_id]['word_positions']
-				list_of_positions_sourcetarget = G[source_node][target_node]['paths'][text_id]['word_positions']
-				for word_position in list_of_positions:
-					if direction=='out':
-						idx2 = find_next_idx(list_of_positions,list_of_positions_sourcetarget,word_position)
-						source_node2,target_node2 = node3,target_node
-					else:
-						idx2 = find_previous_idx(list_of_positions,list_of_positions_sourcetarget,word_position)
-						source_node2,target_node2 = source_node,node3
-					#print('previous edge ',idx2)
-					if idx2>=0:
-						#connect to new node
-						add_connection_node(G,source_node2,target_node2,text_id,idx2)
-						# disconnect from previous nodes
-						edges_copied.append((n_neighbors,text_id,idx2))
-	return edges_copied
-
-
-def find_next_idx(list_of_positions,list_of_positions_next_edge,idx):
-	""" from two lists and one value of the first list, return the value correxponding
-		to this index incremented by an unknown amount but: 
-		it must be less than the next value in the first list (ordered)
-		it must be less than some fixed value (30) 
+def transfer_paths_to_node(H,node1,node2,node_id):	
 	"""
-	list_of_positions.sort()
-	idx_pos = list_of_positions.index(idx)
-	if len(list_of_positions)>idx_pos+1:
-		idx_stop = list_of_positions[idx_pos+1]
-		allowed_pos = range(idx+1,idx_stop)
-	else:
-		allowed_pos = range(idx+1,idx+30) # TODO: get rid of the limitation to 30
-	list_pos = [index for index in allowed_pos if index in list_of_positions_next_edge]
-	if list_pos:
-		return list_pos[0]
-	else:
-		return -1
+	When merging, the paths must be saved in the node_id otherwise the path information
+	is lost during the merge process (Imagine the case of a graph with 2 nodes and a edge).
+	
+	It Compares the paths saved on the nodes (node1 and node2), if any, to the paths on the edges
+	and determine the paths to be saved on node_id.
 
-def find_previous_idx(list_of_positions,list_of_positions_previous_edge,idx):
-	""" Same as find_next_idx but find if an index exist previously to the given idx.
-		See find_next_idx.
+	In practice, during the merging, some paths get separated and have to be removed.
+	We want to keep the word position of the first word on the merged words, so that the handling of
+	node1 and node2 is different.
 	"""
-	list_of_positions.sort()
-	idx_pos = list_of_positions.index(idx)
-	if idx_pos>0:
-		idx_stop = list_of_positions[idx_pos-1]
-		allowed_pos = range(idx_stop,idx)
+	if 'paths' in H.node[node1]: # if there are paths, compare them to the edge ones
+		# copy the dict 
+		# since we want to iterate on a copy of it and modify 2 other copies
+		node1_paths = copy.deepcopy(H.node[node1]['paths'])
+		#H.node[node_id]['paths'] = copy.deepcopy(node_paths)
+		edge_paths = H[node1][node2]['paths']
+		for text_id in node1_paths.keys():
+			if text_id in edge_paths:
+				for idx in node1_paths[text_id]['word_positions']:
+					idx_follow = find_next_idx(node1_paths[text_id]['word_positions'],
+						edge_paths[text_id]['word_positions'],idx)
+					if idx_follow>=0: # if there is a path corresponding to the node path in the edge paths,
+						remove_path(H,node1,text_id,idx)
+						add_path(H,node_id,text_id,idx)
 	else:
-		allowed_pos = range(idx-30,idx) # TODO: get rid of the limitation to 30
-	list_pos = [index for index in allowed_pos if index in list_of_positions_previous_edge]
-	if list_pos:
-		return list_pos[0]
-	else:
-		return -1
+		node1_paths = H[node1][node2]['paths']
+		H.node[node_id]['paths']= node1_paths
+
+	# handle the case where data about connections are stored on node2
+	if 'paths' in H.node[node2]:
+		node2_paths = copy.deepcopy(H.node[node2]['paths'])
+		edge_paths = H[node1][node2]['paths']
+		for text_id in edge_paths.keys():
+			if text_id in node2_paths:
+				for idx in edge_paths[text_id]['word_positions']:
+					idx_e_n = find_next_idx(edge_paths[text_id]['word_positions'],
+						node2_paths[text_id]['word_positions'],idx)
+					idx_n_e = find_previous_idx(edge_paths[text_id]['word_positions'],node1_paths,idx)
+					if idx_e_n>=0 and idx_n_e>=0: # if there is a path corresponding to the edge path in the node1 and node2 paths,
+						remove_path(H,node2,text_id,idx_e_n)
+						add_path(H,node_id,text_id,idx_n_e) 
+
+def remove_path(G,node,text_id,idx):
+	""" Remove a path element created from text_id and at word position idx from node.
+	"""
+	G.node[node]['paths'][text_id]['word_positions'].pop(
+					G.node[node]['paths'][text_id]['word_positions'].index(idx))
+	# if the text_id entry is empty, delete it
+	if not G.node[node]['paths'][text_id]['word_positions']:
+							del G.node[node]['paths'][text_id]
+
+def add_path(G,node,text_id,idx):
+	""" Add a path to ones recorded in the node."""
+	if not 'paths' in G.node[node].keys():
+		G.node[node]['paths'] = {}
+	if not text_id in G.node[node]['paths'].keys():
+		G.node[node]['paths'][text_id] = {'word_positions':[]}
+	G.node[node]['paths'][text_id]['word_positions'].append(idx)
+
 
 def add_connection_node(G,node1,node2,text_id,idx):
 	""" Add a connection between node1 and node2 with edge properties:
@@ -650,6 +590,92 @@ def disconnect_node(G,node1,node2,text_id,idx):
 	if not len(edge['paths']):
 		G.remove_edge(node1,node2)
 
+def copy_links(G,node1,node2,node3,direction):
+	""" Follow the links between node1 and node2 of graph G to their neighbors, according the direction.
+		if direction='out', the out edges from node2 are followed and its neighbors are connected
+		to node3
+		if direction='in', the in edges to node1 are followed back and the connected neighbors are
+		connected to node3
+		return the list of edges that have been copied
+	"""
+	if direction=='out':
+		edge_list = G.successors(node2)
+		source_node = node2
+	elif direction == 'in':
+		edge_list = G.predecessors(node1)
+		target_node = node1
+	else:
+		raise ValueError("direction can only be 'in' or 'out'.")
+	
+	text_ids = [x for x in G[node1][node2]['paths'].keys()]
+	set1 = set(text_ids)
+	edges_copied = []
+	for idx,n_neighbors in enumerate(edge_list):
+		if not (n_neighbors==node1 or n_neighbors==node2): #avoid selfloops and reverse direction
+			if direction=='out':
+				target_node = n_neighbors
+			else:
+				source_node = n_neighbors
+			set2 = set([x for x in G[source_node][target_node]['paths'].keys()])
+			common_elems = set1 & set2
+			for text_id in common_elems:
+				list_of_positions = G[node1][node2]['paths'][text_id]['word_positions']
+				list_of_positions_sourcetarget = G[source_node][target_node]['paths'][text_id]['word_positions']
+				for word_position in list_of_positions:
+					if direction=='out':
+						idx2 = find_next_idx(list_of_positions,list_of_positions_sourcetarget,word_position)
+						source_node2,target_node2 = node3,target_node
+					else:
+						idx2 = find_previous_idx(list_of_positions,list_of_positions_sourcetarget,word_position)
+						source_node2,target_node2 = source_node,node3
+					if idx2>=0:
+						#connect to new node
+						add_connection_node(G,source_node2,target_node2,text_id,idx2)
+						# disconnect from previous nodes
+						edges_copied.append((n_neighbors,text_id,idx2))
+	return edges_copied
+
+
+def find_next_idx(list_of_positions,list_of_positions_next_edge,idx):
+	""" from two lists and one value of the first list, return the value corresponding
+		to this index incremented by an unknown amount but: 
+		it must be less than the next value in the first list (ordered)
+		it must be less than some fixed value (30) 
+	"""
+	#sort the list of positions
+	list_of_positions_sorted = [item for item in list_of_positions]
+	list_of_positions_sorted.sort()
+	idx_pos = list_of_positions_sorted.index(idx)
+	if len(list_of_positions_sorted)>idx_pos+1:
+		idx_stop = list_of_positions_sorted[idx_pos+1]
+		allowed_pos = range(idx+1,idx_stop)
+	else:
+		allowed_pos = range(idx+1,idx+30) # TODO: get rid of the limitation to 30
+	list_pos = [index for index in allowed_pos if index in list_of_positions_next_edge]
+	if list_pos:
+		return list_pos[0]
+	else:
+		return -1
+
+def find_previous_idx(list_of_positions,list_of_positions_previous_edge,idx):
+	""" Same as find_next_idx but find if an index exist previously to the given idx.
+		See find_next_idx.
+	"""
+	list_of_positions_sorted = [item for item in list_of_positions]
+	list_of_positions_sorted.sort()
+	idx_pos = list_of_positions_sorted.index(idx)
+	if idx_pos>0:
+		idx_stop = list_of_positions_sorted[idx_pos-1]
+		allowed_pos = range(idx_stop,idx)
+	else:
+		allowed_pos = range(idx-30,idx) # TODO: get rid of the limitation to 30
+	list_pos = [index for index in allowed_pos if index in list_of_positions_previous_edge]
+	if list_pos:
+		return list_pos[0]
+	else:
+		return -1
+
+
 
 def merge_strongly_connected_nodes_fast(G,min_weight,max_iter=1000):
 	""" Iteratively merge the strongest connections in a graph while respecting the wiring.
@@ -669,9 +695,14 @@ def merge_strongly_connected_nodes_fast(G,min_weight,max_iter=1000):
 	for i in range(max_iter):
 		top_table = top_values(H,'edge','weight',nb_values=1)
 		#if not i%20:
-		node1,node2,weight = top_table.iloc[0].node1,top_table.iloc[0].node2,top_table.iloc[0].weight
+		node1 = top_table.iloc[0].node1
+		node2 = top_table.iloc[0].node2
+		weight = top_table.iloc[0].weight
 		print('Iter {}.== {} {} ==. Weight {} (estimated nb of iter.: {}).'.format(i,node1,node2,weight,nb_of_edges))
 		H = merge_nodes_respect_wiring(H, node1, node2, data=False)
+		#print('Graph G')
+		#if node1=='n' and node2=='qu_nPn_um':
+		#	break
 		G = merge_nodes_respect_wiring(G, node1, node2, data=False)
 		if weight<min_weight:
 			break
