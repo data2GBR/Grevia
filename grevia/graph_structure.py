@@ -206,6 +206,20 @@ def top_values(G,item,value,nb_values=None):
 	dfx = dfx.sort_values([value],ascending=False)
 	return dfx.head(nb_values)
 
+def top_merges(G,nb_values=None):
+	""" Compute and rank the number of merge for each node of the graph.
+
+	Return a pandas dataframe containing the nodes and their number of merge.
+	nb_values specify the number of values to return (default: all values). 
+	"""
+	df_merge = pd.DataFrame()
+	for idx,(node,data) in enumerate(G.nodes(data=True)):
+		if 'merge_from' in data.keys():
+			df_merge.loc[idx,'node'] = node
+			df_merge.loc[idx,'nb_merges'] = len(data['merge_from'])
+	df_merge = df_merge.sort_values('nb_merges', ascending=False)
+	return df_merge.head(nb_values)
+
 def remove_weak_links(G,threshold,weight='weight_n'):
 	""" Remove the weakest edges (weight smaller than threshold) of the most connected nodes of G
 		use the weights stored in variable name weight (default='weight_n')
@@ -358,6 +372,8 @@ def merge_nodes_respect_wiring(G, node1, node2, data=False):
 			# Check if node name already exist, if not create it
 			if node_id not in H:
 				H.add_node(node_id)
+			else:
+				H.node[node_id]['merge_from'] = [node_id] # Record the existence of node_id before the merge
 			# Handle new node data (except 'paths')
 			if data == False:
 				node_data = {}
@@ -379,6 +395,9 @@ def merge_nodes_respect_wiring(G, node1, node2, data=False):
 				if not (key=='paths' or key in H.node[node_id]): # 'paths' need special handling (see later on)
 					H.node[node_id][key]=node_data[key]
 
+			# Record the merge history on node_id
+			record_merge_from(H,node1,node2,node_id)
+
 			# next step: connect node_id to the rest of the graph
 			# Transfer in-connection of node1 and out-connections of node 2 to node_id
 
@@ -387,7 +406,6 @@ def merge_nodes_respect_wiring(G, node1, node2, data=False):
 			edges_to_remove = copy_links(H,node1,node2,node_id,direction='out')
 			# disconnect these outgoing connections from node2
 			for (node,text_id,word_pos) in edges_to_remove:
-				#print(node,text_id,word_pos)
 				disconnect_node(H,node2,node,text_id,word_pos)
 
 			#handle the ingoing connections of node1
@@ -409,6 +427,30 @@ def merge_nodes_respect_wiring(G, node1, node2, data=False):
 				H.remove_node(node2)
 	return H	
 	
+def record_merge_from(G,node1,node2,node_id):
+	""" Write the merge history up to the creation on node_id in the list in node_id attribute 'merge_from'
+	"""
+	# First get the history of node1 and node2 and node_id
+	if 'merge_from' in G.node[node1].keys():
+		merge_history_node1 = G.node[node1]['merge_from']
+	else:
+		merge_history_node1 = []
+
+	if 'merge_from' in G.node[node2].keys():
+		merge_history_node2 = G.node[node2]['merge_from']
+	else:
+		merge_history_node2 = []
+
+	if 'merge_from' in G.node[node_id].keys(): # a node with name node_id could already exist
+		merge_list = G.node[node_id]['merge_from']
+	else:
+		merge_list = []
+
+	[merge_list.append(item)for item in merge_history_node1]
+	[merge_list.append(item)for item in merge_history_node2]
+	merge_list.append((node1,node2))
+	G.node[node_id]['merge_from'] = merge_list
+
 def transfer_paths_to_node(H,node1,node2,node_id):	
 	"""
 	When merging, the paths must be saved in the node_id otherwise the path information
@@ -429,9 +471,9 @@ def transfer_paths_to_node(H,node1,node2,node_id):
 		edge_paths = H[node1][node2]['paths']
 		for text_id in node1_paths.keys():
 			if text_id in edge_paths:
-				for idx in node1_paths[text_id]['word_positions']:
-					idx_follow = find_next_idx(node1_paths[text_id]['word_positions'],
-						edge_paths[text_id]['word_positions'],idx)
+				for idx in list_path_positions(node1_paths,text_id):
+					idx_follow = find_next_idx(list_path_positions(node1_paths,text_id),
+						list_path_positions(edge_paths,text_id),idx)
 					if idx_follow>=0: # if there is a path corresponding to the node path in the edge paths,
 						remove_path(H,node1,text_id,idx)
 						add_path(H,node_id,text_id,idx)
@@ -445,13 +487,22 @@ def transfer_paths_to_node(H,node1,node2,node_id):
 		edge_paths = H[node1][node2]['paths']
 		for text_id in edge_paths.keys():
 			if text_id in node2_paths:
-				for idx in edge_paths[text_id]['word_positions']:
-					idx_e_n = find_next_idx(edge_paths[text_id]['word_positions'],
-						node2_paths[text_id]['word_positions'],idx)
-					idx_n_e = find_previous_idx(edge_paths[text_id]['word_positions'],node1_paths,idx)
+				for idx in list_path_positions(edge_paths,text_id):
+					idx_e_n = find_next_idx(list_path_positions(edge_paths,text_id),
+						list_path_positions(node2_paths,text_id),idx)
+					idx_n_e = find_previous_idx(list_path_positions(edge_paths,text_id),
+						list_path_positions(node1_paths,text_id),idx)
 					if idx_e_n>=0 and idx_n_e>=0: # if there is a path corresponding to the edge path in the node1 and node2 paths,
 						remove_path(H,node2,text_id,idx_e_n)
 						add_path(H,node_id,text_id,idx_n_e) 
+
+def list_path_positions(path,text_id):
+	""" Return the list of positions for a given path and text_id
+	"""
+	if text_id in path.keys():
+		return path[text_id]['word_positions']
+	else:
+		return []
 
 def remove_path(G,node,text_id,idx):
 	""" Remove a path element created from text_id and at word position idx from node.
@@ -531,8 +582,8 @@ def copy_links(G,node1,node2,node3,direction):
 			set2 = set([x for x in G[source_node][target_node]['paths'].keys()])
 			common_elems = set1 & set2
 			for text_id in common_elems:
-				list_of_positions = G[node1][node2]['paths'][text_id]['word_positions']
-				list_of_positions_sourcetarget = G[source_node][target_node]['paths'][text_id]['word_positions']
+				list_of_positions = list_path_positions(G[node1][node2]['paths'],text_id)
+				list_of_positions_sourcetarget = list_path_positions(G[source_node][target_node]['paths'],text_id)
 				for word_position in list_of_positions:
 					if direction=='out':
 						idx2 = find_next_idx(list_of_positions,list_of_positions_sourcetarget,word_position)
@@ -601,6 +652,8 @@ def merge_strongly_connected_nodes_fast(G,min_weight,max_iter=1000):
 	print('Shrinking the copy...')
 	H = remove_weak_links(H,threshold,weight='weight')
 	H.remove_nodes_from(nx.isolates(H))
+	if H.size()==0:
+		raise ValueError('The shrinked graph is empty. Try decreasing the min_weight.')
 	# Search for the strongest connections on the small graph
 	# and merge them both on the small and full graphs
 	nb_of_edges = H.size()
