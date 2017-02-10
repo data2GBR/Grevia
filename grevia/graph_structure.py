@@ -7,9 +7,8 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 import copy
+from collections import Counter
 
-def say_hello(name):
-	print('Hello Mister {}'.format(name))
 
 ##################################################################
 # Graph design
@@ -134,7 +133,7 @@ def normalize_weights(G,weight=None,weight_n='weight_n'):
 	""" Compute the degree of all nodes and normalize the weights of a graph
 		store the values in the property 'weight_n'
 		G : graph
-		weight : string or None (default=None), the variable name where the weights are stored.
+		weight : string or None (default=None, unweighted graph), the variable name where the weights are stored.
 		weight_n: string (default'weight_n'), the name under which the normalized weights are stored
 	"""
 
@@ -206,7 +205,7 @@ def top_values(G,item,value,nb_values=None):
 	dfx = dfx.sort_values([value],ascending=False)
 	return dfx.head(nb_values)
 
-def top_merges(G,nb_values=None):
+def top_merges_v1(G,nb_values=None):
 	""" Compute and rank the number of merge for each node of the graph.
 
 	Return a pandas dataframe containing the nodes and their number of merge.
@@ -219,6 +218,28 @@ def top_merges(G,nb_values=None):
 			df_merge.loc[idx,'nb_merges'] = len(data['merge_from'])
 	df_merge = df_merge.sort_values('nb_merges', ascending=False)
 	return df_merge.head(nb_values)
+
+def top_merges(G,nb_values=None):
+	""" Compute and rank the number of merge for each node of the graph.
+
+	Return a pandas dataframe containing the nodes and their number of merge.
+	nb_values specify the number of values to return (default: all values). 
+	"""
+	df_merge = pd.DataFrame()
+	for idx,node in enumerate(G.nodes()):
+		node_nb_merges = nb_merges(G,node)
+		if node_nb_merges>0:
+			df_merge.loc[idx,'node'] = node
+			df_merge.loc[idx,'nb_merges'] = node_nb_merges
+	df_merge = df_merge.sort_values('nb_merges', ascending=False)
+	return df_merge.head(nb_values)
+
+def nb_merges(G,node):
+	""" Return the number of merges for the given node."""
+	if 'merge_from' in G.node[node].keys():
+		return len(G.node[node]['merge_from'])
+	else:
+		return 0
 
 def remove_weak_links(G,threshold,weight='weight_n'):
 	""" Remove the weakest edges (weight smaller than threshold) of the most connected nodes of G
@@ -702,16 +723,31 @@ def doc_graph(G):
 	"""
 	import itertools
 	G_doc = nx.Graph()
+	total_nb_docs = nb_of_connected_docs(G)
+	print('Nb of documents: {}.'.format(total_nb_docs))
 	for node,data in G.nodes(data=True):
 		if 'paths' in data.keys():
+			node_nb_merges = nb_merges(G,node)
 			list_of_docs = data['paths'].keys()
-			if len(list_of_docs)>1:
+			nb_docs = len(list_of_docs)
+			if nb_docs>1 and nb_docs<total_nb_docs*0.1:
 				for pair in itertools.combinations(list_of_docs, 2):
 					if G_doc.has_edge(*pair):
-						G_doc[pair[0]][pair[1]]['weight']+=1
+						G_doc[pair[0]][pair[1]]['weight']+=2**(node_nb_merges-1)
+						G_doc[pair[0]][pair[1]]['shared_words'].append(node)
 					else:
-						G_doc.add_edge(pair[0],pair[1],weight=1)
+						G_doc.add_edge(pair[0],pair[1],weight=1,shared_words=[node])
 	return G_doc
+
+def nb_of_connected_docs(G):
+	""" Count the number of documents that con be connected in graph G.
+	"""
+	list_of_docs = []
+	for node,data in G.nodes(data=True):
+			if 'paths' in data.keys():
+				list_of_node_docs = data['paths'].keys()
+				[list_of_docs.append(doc) for doc in list_of_node_docs]
+	return len(set(list_of_docs))
 
 ################################################################
 # Community detection and classification
@@ -728,7 +764,7 @@ def find_communities(G):
 	"""
 	import community
 	#first compute the best partition
-	clusterDic = community.best_partition(G)
+	clusterDic = community.best_partition(G, weight='weight')
 	nb_communities = len(set(clusterDic.values()))
 	print('Nb of communities found: {}'.format(nb_communities))
 	nx.set_node_attributes(G,'cluster',clusterDic)
@@ -831,9 +867,19 @@ def subgraphs_to_filenames(list_of_graphs,df_of_filenames,density=False):
 		subgraph_names_list = []
 		for node in graph:
 			subgraph_names_list.append(df_of_filenames.loc[int(node),'filename'])
-		cluster_name_list.append(subgraph_names_list)
 		if density == True:
+			subgraph_names_list.append('/Density\\')
 			subgraph_names_list.append(nx.density(graph))
+			subgraph_names_list.append('/Shared words\\')
+			list_of_words = []
+			for node1,node2,data in graph.edges(data=True):
+				#print(data['shared_words'])
+				[list_of_words.append(word) for word in data['shared_words']]
+			shared_words = Counter(list_of_words)
+			top_shared_words = shared_words.most_common(50)
+			list_top_shared_words = [word+' '+str(occur) for (word,occur) in top_shared_words]
+			[subgraph_names_list.append(word) for word in list_top_shared_words]
+		cluster_name_list.append(subgraph_names_list)
 	return cluster_name_list
 
 def output_filename_classification(cluster_name_list,csv_filename):
