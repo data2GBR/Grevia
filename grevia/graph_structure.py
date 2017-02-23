@@ -195,9 +195,13 @@ def top_values(G,item,value,nb_values=None):
 		nb_values (int or None, default=None): number of values to return, if nb_values=None return all values 
 	"""
 	if item=='edge':
+		if G.size()==0:
+			raise ValueError('The graph has no edge.')
 		dfx = pd.DataFrame([ (n1,n2,data[value]) for n1,n2,data in G.edges(data=True)])
 		dfx.columns = ['node1', 'node2', value]
 	elif item=='node':
+		if len(G.nodes())==0:
+			raise ValueError('The graph is empty.')
 		dfx = pd.DataFrame([ (n,data[value]) for n,data in G.nodes(data=True)])
 		dfx.columns = ['node', value]
 	else:
@@ -413,7 +417,7 @@ def merge_nodes_respect_wiring(G, node1, node2, data=False):
 				raise ValueError("data only accept False, auto or the id of one of the nodes")
 			# copy node data
 			for key in node_data.keys():
-				if not (key=='paths' or key in H.node[node_id]): # 'paths' need special handling (see later on)
+				if not (key=='paths' or key=='merge_from' or key in H.node[node_id]): # 'paths' and 'merge_from' need special handling (see later on)
 					H.node[node_id][key]=node_data[key]
 
 			# Record the merge history on node_id
@@ -442,10 +446,12 @@ def merge_nodes_respect_wiring(G, node1, node2, data=False):
 			# remove edge between node1 and node2
 			H.remove_edge(node1,node2)
 			# remove nodes if they are disconnected
-			if not H.degree(node1):
-				H.remove_node(node1)
+			if not H.degree(node1): 
+				if not 'paths' in H.node[node1].keys(): 
+					H.remove_node(node1)
 			if node2 in H and not H.degree(node2): # first check for the case node1==node2, then the degree
-				H.remove_node(node2)
+				if not 'paths' in H.node[node2].keys(): 		
+					H.remove_node(node2)
 	return H	
 	
 def record_merge_from(G,node1,node2,node_id):
@@ -453,22 +459,21 @@ def record_merge_from(G,node1,node2,node_id):
 	"""
 	# First get the history of node1 and node2 and node_id
 	if 'merge_from' in G.node[node1].keys():
-		merge_history_node1 = G.node[node1]['merge_from']
+		merge_history_node1 = G.node[node1]['merge_from'].copy()
 	else:
 		merge_history_node1 = []
 
 	if 'merge_from' in G.node[node2].keys():
-		merge_history_node2 = G.node[node2]['merge_from']
+		merge_history_node2 = G.node[node2]['merge_from'].copy()
 	else:
 		merge_history_node2 = []
 
 	if 'merge_from' in G.node[node_id].keys(): # a node with name node_id could already exist
-		merge_list = G.node[node_id]['merge_from']
+		merge_list = G.node[node_id]['merge_from'].copy()
 	else:
 		merge_list = []
-
-	[merge_list.append(item)for item in merge_history_node1]
-	[merge_list.append(item)for item in merge_history_node2]
+	[merge_list.append(item) for item in merge_history_node1]
+	[merge_list.append(item) for item in merge_history_node2]
 	merge_list.append((node1,node2))
 	G.node[node_id]['merge_from'] = merge_list
 
@@ -484,38 +489,67 @@ def transfer_paths_to_node(H,node1,node2,node_id):
 	We want to keep the word position of the first word on the merged words, so that the handling of
 	node1 and node2 is different.
 	"""
-	if 'paths' in H.node[node1]: # if there are paths, compare them to the edge ones
+	if 'paths' in H.node[node1] and 'paths' not in H.node[node2]: 
 		# copy the dict 
 		# since we want to iterate on a copy of it and modify 2 other copies
 		node1_paths = copy.deepcopy(H.node[node1]['paths'])
 		#H.node[node_id]['paths'] = copy.deepcopy(node_paths)
 		edge_paths = H[node1][node2]['paths']
 		for text_id in node1_paths.keys():
-			if text_id in edge_paths:
-				for idx in list_path_positions(node1_paths,text_id):
-					idx_follow = find_next_idx(list_path_positions(node1_paths,text_id),
+			if text_id in edge_paths.keys():
+				list_paths_pos_node1 = list_path_positions(node1_paths,text_id)
+				for idx in list_paths_pos_node1:
+					idx_follow = find_next_idx(list_paths_pos_node1,
 						list_path_positions(edge_paths,text_id),idx)
 					if idx_follow>=0: # if there is a path corresponding to the node path in the edge paths,
 						remove_path(H,node1,text_id,idx)
 						add_path(H,node_id,text_id,idx)
-	else:
-		node1_paths = H[node1][node2]['paths']
-		H.node[node_id]['paths']= node1_paths
 
-	# handle the case where data about connections are stored on node2
-	if 'paths' in H.node[node2]:
+	elif 'paths' in H.node[node2] and not 'paths' in H.node[node1]:
 		node2_paths = copy.deepcopy(H.node[node2]['paths'])
 		edge_paths = H[node1][node2]['paths']
 		for text_id in edge_paths.keys():
-			if text_id in node2_paths:
-				for idx in list_path_positions(edge_paths,text_id):
-					idx_e_n = find_next_idx(list_path_positions(edge_paths,text_id),
+			if text_id in node2_paths.keys():
+				list_paths_pos_edge = list_path_positions(edge_paths,text_id)
+				for idx in list_paths_pos_edge:
+					idx_e_n = find_next_idx(list_paths_pos_edge,
 						list_path_positions(node2_paths,text_id),idx)
-					idx_n_e = find_previous_idx(list_path_positions(edge_paths,text_id),
-						list_path_positions(node1_paths,text_id),idx)
-					if idx_e_n>=0 and idx_n_e>=0: # if there is a path corresponding to the edge path in the node1 and node2 paths,
+					if idx_e_n>=0: # if there is a path corresponding to the edge path in the node2 paths,
 						remove_path(H,node2,text_id,idx_e_n)
-						add_path(H,node_id,text_id,idx_n_e) 
+						add_path(H,node_id,text_id,idx)
+
+	elif 'paths' in H.node[node1] and 'paths' in H.node[node2]:
+		node1_paths = copy.deepcopy(H.node[node1]['paths'])
+		node2_paths = copy.deepcopy(H.node[node2]['paths'])
+		edge_paths = H[node1][node2]['paths']
+		for text_id in edge_paths.keys():
+			list_paths_pos_edge = list_path_positions(edge_paths,text_id)
+			for idx in list_paths_pos_edge:
+				if text_id in node1_paths.keys():
+					idx_n_e = find_previous_idx(list_paths_pos_edge,
+							list_path_positions(node1_paths,text_id),idx)
+				else:
+					idx_n_e = -1
+				if text_id in node2_paths.keys():
+					idx_e_n = find_next_idx(list_paths_pos_edge,
+							list_path_positions(node2_paths,text_id),idx)
+				else:
+					idx_e_n = -1
+				if idx_e_n>=0 and idx_n_e>=0: # if there is a path corresponding to the edge path in the node1 and node2 paths,
+						remove_path(H,node1,text_id,idx_n_e)
+						remove_path(H,node2,text_id,idx_e_n)
+						add_path(H,node_id,text_id,idx_n_e)
+				if idx_e_n>=0 and (not idx_n_e>=0): # if there is a path corresponding to the edge path in the node2 paths,
+						remove_path(H,node2,text_id,idx_e_n)
+						add_path(H,node_id,text_id,idx)
+				if (not idx_e_n>=0) and idx_n_e>=0: # if there is a path corresponding to the edge path in the node1 paths,
+						remove_path(H,node1,text_id,idx_n_e)
+						add_path(H,node_id,text_id,idx_n_e)
+
+
+	else:
+		node1_paths = copy.deepcopy(H[node1][node2]['paths'])
+		H.node[node_id]['paths']= node1_paths
 
 def list_path_positions(path,text_id):
 	""" Return the list of positions for a given path and text_id
@@ -595,7 +629,7 @@ def copy_links(G,node1,node2,node3,direction):
 	set1 = set(text_ids)
 	edges_copied = []
 	for idx,n_neighbors in enumerate(edge_list):
-		if not (n_neighbors==node1 or n_neighbors==node2): #avoid selfloops and reverse direction
+		if 1: #not (n_neighbors==node1 or n_neighbors==node2): #avoid selfloops and reverse direction (TODO: check this condition)
 			if direction=='out':
 				target_node = n_neighbors
 			else:
@@ -618,6 +652,23 @@ def copy_links(G,node1,node2,node3,direction):
 						# disconnect from previous nodes
 						edges_copied.append((n_neighbors,text_id,idx2))
 	return edges_copied
+
+def find_next_id_new(G,node,text_id,idx):
+	closest_idx = -1
+	closest_idx_pred = -1
+	for s_node in G.successors(node):
+		if text_id in G.node[s_node]['paths'].keys():
+			list_of_idx = G.node[s_node]['paths'][text_id]['word_positions']
+			closest_idx_s_node = min(filter(lambda x: x > idx,list_of_idx))
+			closest_idx = min(filter(lambda x: x > 0,[closest_idx,closest_idx_s_node]))
+	for p_node in G.predecessors(node):
+		if text_id in G.node[p_node]['paths'].keys():
+			list_of_idx = G.node[p_node]['paths'][text_id]['word_positions']
+			closest_idx_p_node = min(filter(lambda x: x > idx,list_of_idx))
+			closest_idx_pred = min(filter(lambda x: x > 0,[closest_idx_pred,closest_idx_p_node]))
+	if closest_idx > 0 and  closest_idx > closest_idx_pred:
+		closest_idx = -1
+	return closest_idx
 
 
 def find_next_idx(list_of_positions,list_of_positions_next_edge,idx):
@@ -655,7 +706,7 @@ def find_previous_idx(list_of_positions,list_of_positions_previous_edge,idx):
 		allowed_pos = range(idx-30,idx) # TODO: get rid of the limitation to 30
 	list_pos = [index for index in allowed_pos if index in list_of_positions_previous_edge]
 	if list_pos:
-		return list_pos[0]
+		return list_pos[-1]
 	else:
 		return -1
 
@@ -667,6 +718,7 @@ def merge_strongly_connected_nodes_fast(G,min_weight,max_iter=1000):
 		or max_iter has been reached. 
 	"""
 	# Create a lightweight copy of the graph, without the smallest links
+	# to accelerate the search for the strongest connections
 	print('Copying the graph...')
 	H = G.copy()
 	threshold = min_weight
@@ -844,6 +896,36 @@ def cluster_graph(G,min_cluster_size):
 		subgraph_list.append(graph)
 	return subgraph_list
 
+def cluster_graph_with_hierarchy(G,min_cluster_size):
+	""" Separate the graph G into communities that have a specified scale (size)
+
+	Find communities in graph G and recusively communities within communities,
+	until the communities cannot be separated further or have reached a size smaller
+	than min_cluster_size
+	return:
+	list of subgraphs, each one corresponding to a community
+
+	"""
+	subgraph_dic = {}
+	print('Copying graph...')
+	graph = G.copy()
+	print('Graph copied.')
+	if len(graph.nodes())>min_cluster_size:
+		graph,clusterDic = find_communities(graph)
+		nb_communities = len(set(clusterDic.values()))
+		if nb_communities > 1:
+			community_dic = {}
+			for c_i in range(nb_communities): 
+				G_sub = extract_cluster_as_subgraph(graph,c_i)
+				community_dic[c_i] = cluster_graph_with_hierarchy(G_sub,min_cluster_size)
+			subgraph_dic = community_dic
+		else:
+			subgraph_dic =  graph
+	else:
+		subgraph_dic = graph
+	return subgraph_dic
+
+
 def clusters_info(subgraph_list):
 	import numpy as np
 	print('Nb of communities:',len(subgraph_list))
@@ -881,6 +963,24 @@ def subgraphs_to_filenames(list_of_graphs,df_of_filenames,density=False):
 			[subgraph_names_list.append(word) for word in list_top_shared_words]
 		cluster_name_list.append(subgraph_names_list)
 	return cluster_name_list
+
+def subgraph_to_filenames(graph,df_of_filenames,density=False):
+	subgraph_names_list = []
+	for node in graph:
+		subgraph_names_list.append(df_of_filenames.loc[int(node),'filename'])
+	if density == True:
+		subgraph_names_list.append('/Density\\')
+		subgraph_names_list.append(nx.density(graph))
+		subgraph_names_list.append('/Shared words\\')
+		list_of_words = []
+		for node1,node2,data in graph.edges(data=True):
+			#print(data['shared_words'])
+			[list_of_words.append(word) for word in data['shared_words']]
+		shared_words = Counter(list_of_words)
+		top_shared_words = shared_words.most_common(50)
+		list_top_shared_words = [word+' '+str(occur) for (word,occur) in top_shared_words]
+		[subgraph_names_list.append(word) for word in list_top_shared_words]
+	return subgraph_names_list
 
 def output_filename_classification(cluster_name_list,csv_filename):
 	""" Save the classification in a csv file
