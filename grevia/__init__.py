@@ -2,6 +2,7 @@
 """Toolbox for constructing multilayer graphs."""
 
 from .graph_structure import *
+from . import texttools
 
 __author__      = "Benjamin Ricaud"
 __copyright__   = "Copyright 2017, Benjamin Ricaud"
