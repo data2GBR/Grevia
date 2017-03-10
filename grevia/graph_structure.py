@@ -187,9 +187,9 @@ def value_stats(G,item,value):
 	return mean_value , min_value, max_value
 
 def top_values(G,item,value,nb_values=None):
-	""" return the top values of data in graph G
-		return a dataframe with first column(s) corresponding to node and edge
-		with their associated value (sorted)
+	""" return the top values of 'value' in 'item' (nodes or edges) of graph G
+		return a sorted list where each item is a tuple
+		(node,data) if item='node' or (node1,node2,data) if item='edge'
 		item (string): 'edge' or 'node'
 		value (string): name of the value attached to the nodes or edges of graph G
 		nb_values (int or None, default=None): number of values to return, if nb_values=None return all values 
@@ -197,17 +197,14 @@ def top_values(G,item,value,nb_values=None):
 	if item=='edge':
 		if G.size()==0:
 			raise ValueError('The graph has no edge.')
-		dfx = pd.DataFrame([ (n1,n2,data[value]) for n1,n2,data in G.edges(data=True)])
-		dfx.columns = ['node1', 'node2', value]
+		data_sorted = sorted(G.edges(data=True), key=lambda d: d[2][value], reverse=True)
 	elif item=='node':
 		if len(G.nodes())==0:
 			raise ValueError('The graph is empty.')
-		dfx = pd.DataFrame([ (n,data[value]) for n,data in G.nodes(data=True)])
-		dfx.columns = ['node', value]
+		data_sorted = sorted(G.nodes(data=True), key=lambda d: d[1][value], reverse=True)
 	else:
 		raise ValueError("only 'node' or 'edge' are accepted as item")
-	dfx = dfx.sort_values([value],ascending=False)
-	return dfx.head(nb_values)
+	return data_sorted[:nb_values]
 
 def top_merges_v1(G,nb_values=None):
 	""" Compute and rank the number of merge for each node of the graph.
@@ -871,13 +868,13 @@ def merge_strongly_connected_nodes_fast(G,min_weight,max_iter=100,val_buffer=100
 	for i in range(max_iter):
 		print('Iter {}.'.format(i))
 		print('Conputing the top weights...')
-		top_table = top_values(G,'edge','weight',nb_values=val_buffer)
+		top_list = top_values(G,'edge','weight',nb_values=val_buffer)
 		print('Merging the nodes with top weight edges...')
-		for row in top_table.itertuples():
+		for item in top_list:
 		#if not i%20:
-			node1 = row.node1
-			node2 = row.node2
-			weight = row.weight
+			node1 = item[0]
+			node2 = item[1]
+			weight = item[2]['weight']
 			#print('Iter {}.== {} {} ==. Weight {} .'.format(i,node1,node2,weight))
 			G = merge_nodes_respect_wiring(G, node1, node2, data=False)
 		print('Last merge: == {} {} ==. Weight {} .'.format(node1,node2,weight))
@@ -1108,7 +1105,7 @@ def clusters_info(subgraph_list):
 		np.min(list_nb_nodes),np.max(list_nb_nodes)))
 
 
-def subgraphs_to_filenames(list_of_graphs,df_of_filenames,density=False):
+def subgraphs_to_filenames(list_of_graphs,dic_index_filenames,density=False):
 	""" Return the list of filenames associated to each graph in the list_of_graphs.
 		
 		for each graph in the list of graphs, associate the nodes id to their filename
@@ -1122,7 +1119,7 @@ def subgraphs_to_filenames(list_of_graphs,df_of_filenames,density=False):
 	for graph in list_of_graphs:
 		subgraph_names_list = []
 		for node in graph:
-			subgraph_names_list.append(df_of_filenames.loc[int(node),'filename'])
+			subgraph_names_list.append(dic_index_filenames[int(node)])
 		if density == True:
 			subgraph_names_list.append('/Density\\')
 			subgraph_names_list.append(nx.density(graph))

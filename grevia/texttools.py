@@ -5,7 +5,6 @@
 """ Tools for extracting information in texts. """
 
 from collections import Counter
-import pandas as pd
 from functools import reduce
 
 def proper_nouns(list_of_texts,error_rate=10,noun_occur_threshold=1):
