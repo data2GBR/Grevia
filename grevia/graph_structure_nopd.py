@@ -705,7 +705,7 @@ def find_next_idx(G,node,text_id,idx):
 		find in the neighbors of node 'node' the closest larger value of idx.
 		Return this closest value and the node id of the neighbor having this value.
 		Return -1 for the closest value and empty string for the neighbor id if the closest value does not exist
- 	
+	
 	"""
 	closest_idx = -1
 	neighbor_node = ''
@@ -1085,24 +1085,26 @@ def subgraphs_to_filenames(list_of_graphs,dic_index_filenames,density=False):
 		cluster_name_list.append(subgraph_names_list)
 	return cluster_name_list
 
-def subgraph_to_filenames(graph,df_of_filenames,density=False):
-	subgraph_names_list = []
-	for node in graph:
-		subgraph_names_list.append(df_of_filenames.loc[int(node),'filename'])
-	if density == True:
-		subgraph_names_list.append('/Density\\')
-		subgraph_names_list.append(nx.density(graph))
-		subgraph_names_list.append('/Shared words\\')
-		list_of_words = []
-		for node1,node2,data in graph.edges(data=True):
-			#print(data['shared_words'])
-			[list_of_words.append(word) for word in data['shared_words']]
-		shared_words = Counter(list_of_words)
-		top_shared_words = shared_words.most_common(50)
-		list_top_shared_words = [word+' '+str(occur) for (word,occur) in top_shared_words]
-		[subgraph_names_list.append(word) for word in list_top_shared_words]
-	return subgraph_names_list
 
+
+def output_filename_classification(cluster_name_list,csv_filename):
+	""" Save the classification in a csv file
+	
+	Each column correspond to a cluster.
+	Along the columns are the filenames classified in the corresponding cluster.
+	Return the dataframe.
+
+	"""
+	import csv
+	data_dic = {}
+	for idx,name_list in enumerate(cluster_name_list):
+		data_dic[idx] = name_list
+	print('Save to file {}'.format(csv_filename))
+	with open(csv_filename, 'wb') as csv_file:
+		writer = csv.writer(csv_file)
+		for key, value_list in data_dic.items():
+			writer.writerow(value_list)
+	return data_dic
 
 ################################################################
 # Ouput the graph
