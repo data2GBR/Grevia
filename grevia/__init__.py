@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Toolbox for constructing multilayer graphs."""
 
-from .graph_structure import *
+from .graph_structure_nopd import *
 from . import texttools
 
 __author__      = "Benjamin Ricaud"
