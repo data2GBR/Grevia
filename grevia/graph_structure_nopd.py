@@ -1100,7 +1100,7 @@ def output_filename_classification(cluster_name_list,csv_filename):
 	for idx,name_list in enumerate(cluster_name_list):
 		data_dic[idx] = name_list
 	print('Save to file {}'.format(csv_filename))
-	with open(csv_filename, 'wb') as csv_file:
+	with open(csv_filename, 'w') as csv_file:
 		writer = csv.writer(csv_file)
 		for key, value_list in data_dic.items():
 			writer.writerow(value_list)
