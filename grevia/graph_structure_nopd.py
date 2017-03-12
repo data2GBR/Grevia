@@ -1103,7 +1103,9 @@ def output_filename_classification(cluster_name_list,csv_filename):
 	with open(csv_filename, 'w') as csv_file:
 		writer = csv.writer(csv_file)
 		for key, value_list in data_dic.items():
-			writer.writerow(value_list)
+			row_to_write = ['Cluster_'+str(key)]
+			[row_to_write.append(item) for item in value_list]
+			writer.writerow(row_to_write)
 	return data_dic
 
 ################################################################
