@@ -1085,7 +1085,78 @@ def subgraphs_to_filenames(list_of_graphs,dic_index_filenames,density=False):
 		cluster_name_list.append(subgraph_names_list)
 	return cluster_name_list
 
+def subgraphs_to_filenames_to_dic(list_of_graphs,dic_index_filenames,density=False):
+	""" Return the list of filenames associated to each graph in the list_of_graphs.
+		
+		for each graph in the list of graphs, associate the nodes id to their filename
+		using df_of_filenames.
+		Return:
+		list of list containing the filenames for each community (graph)
+		if density==True, append at the end of each filename list the density of the subgraph
 
+	"""
+	cluster_dic = {}
+	cluster_name_list = []
+	for idx,graph in enumerate(list_of_graphs):
+		subgraph_names_list = []
+		for node in graph:
+			subgraph_names_list.append(dic_index_filenames[int(node)])
+		cluster_dic[idx] = {}
+		cluster_dic[idx]['names'] = subgraph_names_list
+		cluster_dic[idx]['density'] = nx.density(graph)
+		list_of_words = []
+		for node1,node2,data in graph.edges(data=True):
+			#print(data['shared_words'])
+			[list_of_words.append(word) for word in data['shared_words']]
+		shared_words = Counter(list_of_words)
+		top_shared_words = shared_words.most_common(50)
+		list_top_shared_words = [word+' '+str(occur) for (word,occur) in top_shared_words]
+		cluster_dic[idx]['shared_words'] = list_top_shared_words
+	return cluster_dic
+
+
+def output_filename_classification_from_dic(cluster_name_dic,csv_filename):
+	""" Save the classification in a csv file
+	
+	Each column correspond to a cluster.
+	Along the columns are the filenames classified in the corresponding cluster.
+	Return the dataframe.
+
+	"""
+	import csv
+	data_dic = {}
+	# get the max number of names
+	max_name_len = 0
+	for key in cluster_name_dic.keys():
+		nb_names = len(cluster_name_dic[key]['names'])
+		if nb_names>max_name_len:
+			max_name_len = nb_names
+	# append the names
+	for key in cluster_name_dic.keys():
+		nb_names = len(cluster_name_dic[key]['names'])
+		info_list = []
+		for n in range(max_name_len):
+			if n<nb_names:
+				info_list.append(cluster_name_dic[key]['names'][n])
+			else:
+				info_list.append(' ')
+		# append density
+		info_list.append('/Density\\')
+		info_list.append(cluster_name_dic[key]['density'])
+		# append shared words
+		info_list.append('/Shared words\\')
+		[info_list.append(item) for item in cluster_name_dic[key]['shared_words']]
+		# save to dic
+		data_dic[key] = info_list
+
+	print('Save to file {}'.format(csv_filename))
+	with open(csv_filename, 'w') as csv_file:
+		writer = csv.writer(csv_file)
+		for key, value_list in data_dic.items():
+			row_to_write = ['Cluster_'+str(key)]
+			[row_to_write.append(item) for item in value_list]
+			writer.writerow(row_to_write)
+	return data_dic
 
 def output_filename_classification(cluster_name_list,csv_filename):
 	""" Save the classification in a csv file
@@ -1107,7 +1178,6 @@ def output_filename_classification(cluster_name_list,csv_filename):
 			[row_to_write.append(item) for item in value_list]
 			writer.writerow(row_to_write)
 	return data_dic
-
 ################################################################
 # Ouput the graph
 
