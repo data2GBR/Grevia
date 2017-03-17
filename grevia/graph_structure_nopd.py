@@ -7,6 +7,7 @@ import networkx as nx
 import numpy as np
 import copy
 from collections import Counter
+import os
 
 
 ##################################################################
@@ -1085,7 +1086,7 @@ def subgraphs_to_filenames(list_of_graphs,dic_index_filenames,density=False):
 		cluster_name_list.append(subgraph_names_list)
 	return cluster_name_list
 
-def subgraphs_to_filenames_to_dic(list_of_graphs,dic_index_filenames,density=False):
+def subgraphs_to_filenames_to_dic(list_of_graphs,dic_index_filenames,file_infos_dic,density=False):
 	""" Return the list of filenames associated to each graph in the list_of_graphs.
 		
 		for each graph in the list of graphs, associate the nodes id to their filename
@@ -1100,7 +1101,9 @@ def subgraphs_to_filenames_to_dic(list_of_graphs,dic_index_filenames,density=Fal
 	for idx,graph in enumerate(list_of_graphs):
 		subgraph_names_list = []
 		for node in graph:
-			subgraph_names_list.append(dic_index_filenames[int(node)])
+			node_name = dic_index_filenames[int(node)]
+			node_file_path = file_infos_dic[node_name]['path']
+			subgraph_names_list.append(os.path.join(node_file_path,node_name))
 		cluster_dic[idx] = {}
 		cluster_dic[idx]['names'] = subgraph_names_list
 		cluster_dic[idx]['density'] = nx.density(graph)
